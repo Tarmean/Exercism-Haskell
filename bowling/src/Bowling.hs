@@ -1,84 +1,49 @@
 {-# LANGUAGE FlexibleContexts  #-}
-{-# LANGUAGE ExistentialQuantification  #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving  #-}
-{-# LANGUAGE StandaloneDeriving #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE DeriveDataTypeable  #-}
 module Bowling (BowlingError(..), score) where
 
-import Control.Monad.State
-import Control.Applicative
-import Control.Monad.Except
-import Data.List (find)
+import Text.Parsec.Prim
+import Text.Parsec.Combinator
+import Text.Parsec.Pos
+import Control.Monad
+
 
 data BowlingError = IncompleteGame | InvalidRoll { rollIndex :: Int, rollValue :: Int }
   deriving (Eq, Show)
 
+score throws = runParser pGame () "Game" throws
 
-data ParseState = ParserState [Int] Int
-type BErr = Either BowlingError
-newtype Parser i = Parser { runParser :: StateT ParseState BErr i } deriving (Functor, Applicative, Monad)
-deriving instance MonadState ParseState Parser
-deriving instance MonadError BowlingError Parser
-instance Alternative Parser where
-  m <|> n =  m `catchError` const n
-  empty = Parser { runParser = StateT $ \_ -> throwError IncompleteGame }
+type ParserT m a = ParsecT [Int] () m a
 
-score = parse game
+pGame :: (Monad m) => ParserT m Int
+pGame = do
+  beginning <- replicateM 9 $ pFrame (lookAhead . pBonus)
+  end <- pFrame pBonus
+  eof
+  return (sum beginning + end)
+pFrame bonus = msum $ [pStrike, pSpare, pOpen] <*> pure bonus
+pStrike bonus = liftM2 (+) (pThrow 10) (bonus 2)
+pSpare bonus = try $ do
+  x <- anyThrow
+  y <- anyThrow
+  guard (x + y == 10)
+  bonus <- bonus 1
+  return (x + y + bonus)
+pOpen bonus = try $ do
+  x <- anyThrow
+  y <- anyThrow
+  guard (x + y < 10)
+  return (x + y)
 
-parse :: Parser Int -> [Int] -> Either BowlingError Int
-parse p v = do
-  parsed <- runStateT (runParser p) $ ParserState v 0
-  case parsed of
-    (result, ParserState [] idx) -> return result
-    (_, ParserState (x:_) idx) -> throwError InvalidRoll {rollIndex = idx, rollValue = x }
+pBonus :: (Monad m) => Int -> ParserT m Int
+pBonus i = sum <$> (replicateM i anyThrow)
 
-game :: Parser Int
-game = do
-  beginning <- replicateM 9 $ frame False
-  ending <- frame True
-  return $ sum beginning + ending
-frame ::  Bool -> Parser Int
-frame consume = strike consume <|> do
-  first <- remaining 0
-  second <- remaining first
-  if first + second == 10
-  then do
-    bonus <- bonus consume 1
-    return $ first + second + bonus
-  else return $ first + second
-strike ::  Bool -> Parser Int
-strike consume = do
-  satisfy (==10)
-  boni <- bonus consume 2
-  return $ 10 + boni
+anyThrow :: (Monad m) => ParserT m Int
+anyThrow = satisfy (const True)
+pThrow :: (Monad m) => Int -> ParserT m Int
+pThrow i = satisfy (==i)
 
-bonus ::  Bool -> Int -> Parser Int
-bonus consume 2 = f $ do
-  a <- remaining 0
-  b <- remaining a
-  return $ a + b
-  where f = if consume then id else lookAhead
-bonus consume 1 = f $ remaining 0
-  where f = if consume then id else lookAhead
-
-lookAhead :: Parser a -> Parser a
-lookAhead t = do
-  state <- get
-  result <- t
-  put state
-  return result
-
-remaining 10 = satisfy $ liftA2 (&&) (>=0) (<=10)
-remaining i = satisfy $ liftA2 (&&) (>=0) (<=10-i)
-
-satisfy :: (Int->Bool)  -> Parser Int
-satisfy cond = do
-  ParserState source pos <- get
-  case source of
-    (x:xs) ->
-      if cond x
-      then do
-        put $ ParserState xs (pos+1)
-        return x
-      else throwError InvalidRoll {rollIndex = pos, rollValue = x}
-    _ -> throwError IncompleteGame
+satisfy :: (Stream s m Int) => (Int -> Bool) -> ParsecT s u m Int
+satisfy f           = tokenPrim (\c -> show [c])
+                                (\pos _c _cs -> incSourceColumn pos 1)
+                                (\c -> if f c then Just c else Nothing)
