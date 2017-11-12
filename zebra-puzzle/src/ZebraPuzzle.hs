@@ -1,3 +1,4 @@
+{-# Language RecordWildCards #-}
 module ZebraPuzzle (Resident(..), Solution(..), solve) where
 import Data.List (zip5, find)
 import Data.List as L
@@ -22,14 +23,15 @@ solve = Solution { waterDrinker = waterDrinker, zebraOwner = zebraOwner }
   where
     solution = head solutions
 
-    drinksWater (_, drink, _, _, _) = drink == Water
-    ownsZebra   (_, _, _, _, pet)   = pet == Zebra
-    getResident (Just (resident, _, _, _, _)) = resident
+    drinksWater Position {..} = drink == Water
+    ownsZebra   Position {..}   = pet == Zebra
+    getResident (Just Position {..}) = resident
 
     zebraOwner   = getResident $ find ownsZebra solution
     waterDrinker = getResident $ find drinksWater solution
+data Position = Position { resident :: Resident, drink :: Drinks, cigarette :: Cigaretts, house :: House, pet :: Pet } deriving Show
 
-solutions :: [[(Resident, Drinks, Cigaretts, House, Pet)]]
+solutions :: [[Position]]
 solutions = do 
               -- tried putting the contained conditions first and the rest kind of followed
               -- not sure if optimal, though
@@ -58,7 +60,7 @@ solutions = do
 
               same     resident Spaniard     owns Dog
 
-              return $ zip5 resident drinks smokes house owns
+              return $ zipWith5 Position resident drinks smokes house owns
 
            
   where
@@ -68,8 +70,8 @@ solutions = do
 
     rightToPred k1 v1 k2 v2 = elem (v1, v2) $ zip k1 (tail k2)
     rightTo k1 v1 k2 v2 = guard (rightToPred k1 v1 k2 v2)
-    nextTo k1 v1 k2 v2 = guard ((rightToPred k1 v1 k2 v2)||
-                                (rightToPred k2 v2 k1 v1))
+    nextTo k1 v1 k2 v2 = guard (rightToPred k1 v1 k2 v2||
+                                rightToPred k2 v2 k1 v1)
 
     permutations :: (Bounded a, Enum a) => [[a]]
     permutations = L.permutations [minBound..maxBound]
